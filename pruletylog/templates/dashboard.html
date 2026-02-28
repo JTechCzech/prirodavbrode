@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IoT Device Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; padding: 20px; }
+        .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .header h1 { margin-bottom: 10px; }
+        .stats { display: flex; gap: 20px; margin-bottom: 20px; }
+        .stat-card { background: white; padding: 20px; border-radius: 8px; flex: 1; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .stat-card h3 { color: #7f8c8d; font-size: 14px; margin-bottom: 10px; }
+        .stat-card .number { font-size: 32px; font-weight: bold; color: #2c3e50; }
+        .stat-card.online .number { color: #27ae60; }
+        .stat-card.offline .number { color: #e74c3c; }
+        .devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .device-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .device-card.online { border-left: 4px solid #27ae60; }
+        .device-card.offline { border-left: 4px solid #e74c3c; opacity: 0.7; }
+        .device-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .device-id { font-size: 18px; font-weight: bold; color: #2c3e50; }
+        .status-badge { padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+        .status-badge.online { background: #27ae60; color: white; }
+        .status-badge.offline { background: #e74c3c; color: white; }
+        .device-info { display: grid; grid-template-columns: 120px 1fr; gap: 10px; font-size: 14px; }
+        .info-label { color: #7f8c8d; font-weight: 500; }
+        .info-value { color: #2c3e50; font-family: 'Courier New', monospace; }
+        .csv-section { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .csv-section h2 { margin-bottom: 15px; color: #2c3e50; }
+        .btn { padding: 10px 20px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
+        .btn:hover { background: #2980b9; }
+        .log-entry { padding: 8px; border-bottom: 1px solid #ecf0f1; font-size: 13px; font-family: 'Courier New', monospace; }
+        .log-entry:last-child { border-bottom: none; }
+        #logViewer { max-height: 400px; overflow-y: auto; margin-top: 15px; border: 1px solid #ecf0f1; border-radius: 5px; }
+        .btn-ota { padding: 8px 15px; background: #e67e22; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 12px; margin-top: 10px; }
+        .btn-ota:hover { background: #d35400; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
+        .modal-content { background: white; margin: 5% auto; padding: 30px; border-radius: 10px; width: 500px; max-width: 90%; }
+        .modal-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #2c3e50; }
+        .modal-close { float: right; font-size: 28px; font-weight: bold; color: #aaa; cursor: pointer; }
+        .modal-close:hover { color: #000; }
+        .file-input { margin: 20px 0; }
+        .progress-bar { width: 100%; height: 30px; background: #ecf0f1; border-radius: 5px; overflow: hidden; margin-top: 15px; display: none; }
+        .progress-fill { height: 100%; background: #27ae60; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🌐 IoT Device Dashboard</h1>
+        <p>Real-time monitoring of ESP32 devices</p>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card online">
+            <h3>ONLINE DEVICES</h3>
+            <div class="number" id="onlineCount">0</div>
+        </div>
+        <div class="stat-card offline">
+            <h3>OFFLINE DEVICES</h3>
+            <div class="number" id="offlineCount">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>TOTAL DEVICES</h3>
+            <div class="number" id="totalCount">0</div>
+        </div>
+    </div>
+
+    <h2 style="margin-bottom: 15px; color: #2c3e50;">Online Devices</h2>
+    <div class="devices" id="onlineDevices"></div>
+
+    <h2 style="margin-bottom: 15px; margin-top: 30px; color: #2c3e50;">Offline Devices</h2>
+    <div class="devices" id="offlineDevices"></div>
+
+    <div class="csv-section">
+        <h2>🐦 Bird Detections</h2>
+        <div id="birdStats" style="margin-bottom: 15px; font-size: 18px; font-weight: bold; color: #27ae60;">
+            Total detections: <span id="totalBirds">0</span>
+        </div>
+        <div id="latestBirdDetection" style="margin-bottom: 15px; padding: 15px; background: #ecf0f1; border-radius: 5px; display: none;">
+            <strong>Latest Detection:</strong><br>
+            Device: <span id="latestDevice"></span><br>
+            Count: <span id="latestCount"></span><br>
+            Time: <span id="latestTime"></span>
+        </div>
+        <button class="btn" onclick="downloadBirdsCSV()">📥 Download Birds CSV</button>
+        <button class="btn" onclick="loadBirdsCSV()" style="background: #27ae60; margin-left: 10px;">👁️ View Bird Logs</button>
+        <div id="birdLogViewer"></div>
+    </div>
+
+    <div class="csv-section" style="margin-top: 20px;">
+        <h2>📊 Device History (CSV)</h2>
+        <button class="btn" onclick="downloadCSV()">📥 Download CSV</button>
+        <button class="btn" onclick="loadCSV()" style="background: #9b59b6; margin-left: 10px;">👁️ View Logs</button>
+        <div id="logViewer"></div>
+    </div>
+
+    <!-- OTA Update Modal -->
+    <div id="otaModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeOTA()">&times;</span>
+            <div class="modal-header">🔄 OTA Firmware Update</div>
+            <p>Device: <strong id="otaDeviceId"></strong></p>
+            <div class="file-input">
+                <label for="firmwareFile">Select Firmware (.bin):</label><br>
+                <input type="file" id="firmwareFile" accept=".bin" style="margin-top: 10px;">
+            </div>
+            <button class="btn" onclick="startOTA()" style="background: #e67e22;">🚀 Flash Firmware</button>
+            <div class="progress-bar" id="otaProgress">
+                <div class="progress-fill" id="otaProgressFill">0%</div>
+            </div>
+            <div id="otaStatus" style="margin-top: 15px; color: #7f8c8d;"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let devices = {};
+        let offlineDevices = {};
+
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            loadDevices();
+        });
+
+        socket.on('notification', (data) => {
+            console.log('Notification:', data);
+            if (data.type === 'device_connected') {
+                devices[data.device_id] = {
+                    firmware: data.firmware,
+                    status: 'online',
+                    lastData: {}
+                };
+                delete offlineDevices[data.device_id];
+            } else if (data.type === 'device_disconnected') {
+                if (devices[data.device_id]) {
+                    offlineDevices[data.device_id] = devices[data.device_id];
+                    offlineDevices[data.device_id].status = 'offline';
+                    delete devices[data.device_id];
+                }
+            } else if (data.type === 'device_data') {
+                if (devices[data.device_id]) {
+                    devices[data.device_id].lastData = data.payload;
+                }
+            } else if (data.type === 'bird_detection') {
+                handleBirdDetection(data);
+            }
+            updateDashboard();
+        });
+
+        function handleBirdDetection(data) {
+            console.log('🐦 Bird detected:', data);
+
+            // Update latest detection
+            document.getElementById('latestBirdDetection').style.display = 'block';
+            document.getElementById('latestDevice').textContent = data.device_id;
+            document.getElementById('latestCount').textContent = data.count;
+            document.getElementById('latestTime').textContent = new Date().toLocaleString();
+
+            // Update total count (fetch from server)
+            loadBirdStats();
+
+            // Show notification
+            alert(`🐦 Bird detected! Device: ${data.device_id}, Count: ${data.count}`);
+        }
+
+        function loadBirdStats() {
+            fetch('/api/birds_data')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.logs && data.logs.length > 1) {
+                        // Subtract 1 for header row
+                        document.getElementById('totalBirds').textContent = data.logs.length - 1;
+                    }
+                });
+        }
+
+        function loadDevices() {
+            fetch('/api/devices')
+                .then(r => r.json())
+                .then(data => {
+                    devices = data.online || {};
+                    offlineDevices = data.offline || {};
+                    updateDashboard();
+                });
+        }
+
+        function updateDashboard() {
+            const onlineCount = Object.keys(devices).length;
+            const offlineCount = Object.keys(offlineDevices).length;
+
+            document.getElementById('onlineCount').textContent = onlineCount;
+            document.getElementById('offlineCount').textContent = offlineCount;
+            document.getElementById('totalCount').textContent = onlineCount + offlineCount;
+
+            renderDevices('onlineDevices', devices, 'online');
+            renderDevices('offlineDevices', offlineDevices, 'offline');
+        }
+
+        function renderDevices(containerId, deviceList, status) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            for (const [deviceId, info] of Object.entries(deviceList)) {
+                const card = document.createElement('div');
+                card.className = `device-card ${status}`;
+
+                const lastData = info.lastData || {};
+
+                const otaButton = status === 'online' ?
+                    `<button class="btn-ota" onclick="openOTA('${deviceId}')">🔄 OTA Update</button>` : '';
+
+                card.innerHTML = `
+                    <div class="device-header">
+                        <div class="device-id">${deviceId}</div>
+                        <div class="status-badge ${status}">${status.toUpperCase()}</div>
+                    </div>
+                    <div class="device-info">
+                        <div class="info-label">Firmware:</div>
+                        <div class="info-value">${info.firmware || 'N/A'}</div>
+
+                        <div class="info-label">SSID:</div>
+                        <div class="info-value">${lastData.ssid || 'N/A'}</div>
+
+                        <div class="info-label">BSSID:</div>
+                        <div class="info-value">${lastData.bssid || 'N/A'}</div>
+
+                        <div class="info-label">RSSI:</div>
+                        <div class="info-value">${lastData.rssi ? lastData.rssi + ' dBm' : 'N/A'}</div>
+
+                        <div class="info-label">IP Address:</div>
+                        <div class="info-value">${lastData.ip || 'N/A'}</div>
+                    </div>
+                    ${otaButton}
+                `;
+
+                container.appendChild(card);
+            }
+
+            if (Object.keys(deviceList).length === 0) {
+                container.innerHTML = '<p style="color: #7f8c8d; padding: 20px;">No devices</p>';
+            }
+        }
+
+        function downloadCSV() {
+            window.location.href = '/api/download_csv';
+        }
+
+        function loadCSV() {
+            fetch('/api/csv_data')
+                .then(r => r.json())
+                .then(data => {
+                    const viewer = document.getElementById('logViewer');
+                    viewer.innerHTML = '';
+
+                    if (data.logs && data.logs.length > 0) {
+                        data.logs.reverse().forEach(log => {
+                            const entry = document.createElement('div');
+                            entry.className = 'log-entry';
+                            entry.textContent = log;
+                            viewer.appendChild(entry);
+                        });
+                    } else {
+                        viewer.innerHTML = '<p style="padding: 20px; color: #7f8c8d;">No logs available</p>';
+                    }
+                });
+        }
+
+        function downloadBirdsCSV() {
+            window.location.href = '/api/birds_csv';
+        }
+
+        function loadBirdsCSV() {
+            fetch('/api/birds_data')
+                .then(r => r.json())
+                .then(data => {
+                    const viewer = document.getElementById('birdLogViewer');
+                    viewer.innerHTML = '';
+
+                    if (data.logs && data.logs.length > 0) {
+                        data.logs.reverse().forEach(log => {
+                            const entry = document.createElement('div');
+                            entry.className = 'log-entry';
+                            entry.textContent = log;
+                            viewer.appendChild(entry);
+                        });
+                    } else {
+                        viewer.innerHTML = '<p style="padding: 20px; color: #7f8c8d;">No bird detections yet</p>';
+                    }
+                });
+        }
+
+        // OTA Functions
+        let currentOtaDevice = null;
+
+        function openOTA(deviceId) {
+            currentOtaDevice = deviceId;
+            document.getElementById('otaDeviceId').textContent = deviceId;
+            document.getElementById('otaModal').style.display = 'block';
+            document.getElementById('otaProgress').style.display = 'none';
+            document.getElementById('otaStatus').textContent = '';
+            document.getElementById('firmwareFile').value = '';
+        }
+
+        function closeOTA() {
+            document.getElementById('otaModal').style.display = 'none';
+            currentOtaDevice = null;
+        }
+
+        function startOTA() {
+            const fileInput = document.getElementById('firmwareFile');
+            if (!fileInput.files[0]) {
+                alert('Please select a firmware file');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('firmware', fileInput.files[0]);
+            formData.append('device_id', currentOtaDevice);
+
+            document.getElementById('otaStatus').textContent = 'Uploading firmware...';
+            document.getElementById('otaProgress').style.display = 'block';
+            document.getElementById('otaProgressFill').style.width = '0%';
+            document.getElementById('otaProgressFill').textContent = '0%';
+
+            fetch('/api/ota_upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('otaStatus').textContent = 'Firmware uploaded! Starting OTA update on device...';
+                } else {
+                    document.getElementById('otaStatus').textContent = 'Error: ' + data.error;
+                }
+            })
+            .catch(e => {
+                document.getElementById('otaStatus').textContent = 'Upload failed: ' + e.message;
+            });
+        }
+
+        // Listen for OTA progress updates
+        socket.on('notification', (data) => {
+            if (data.type === 'ota_progress' && data.device_id === currentOtaDevice) {
+                const progress = data.progress;
+                document.getElementById('otaProgressFill').style.width = progress + '%';
+                document.getElementById('otaProgressFill').textContent = progress + '%';
+                document.getElementById('otaStatus').textContent = data.message || `Progress: ${progress}%`;
+
+                if (progress >= 100) {
+                    document.getElementById('otaStatus').textContent = '✅ OTA Update Complete!';
+                    setTimeout(() => closeOTA(), 3000);
+                }
+            }
+        });
+
+        // Initial load
+        loadDevices();
+        loadBirdStats();
+    </script>
+</body>
+</html>
