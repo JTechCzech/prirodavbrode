@@ -1,0 +1,17 @@
+cameras:
+  ESP32_ORECH:
+    topic: prulety/ESP32_ORECH/bird_detection
+    did: ESP32_ORECH
+    streams:
+      outdoor: rtsp://admin:pass@192.168.0.41/11
+      indoor:
+        url: rtsp://admin:pass@192.168.0.214
+        ffmpeg_extra_args:
+          - -use_wallclock_as_timestamps
+          - "1"
+          - -fflags
+          - +genpts+discardcorrupt
+          - -avoid_negative_ts
+          - make_zero
+          - -timeout
+          - "5000000"
