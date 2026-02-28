@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HLS Player</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Segoe UI', sans-serif;
+    overflow: hidden;
+  }
+
+  /* ── PLAYER: 16:9 fill screen ── */
+  .player {
+    position: relative;
+    width: 100vw;
+    height: 56.25vw;
+    max-height: 100vh;
+    max-width: 177.78vh;
+    background: #000;
+    user-select: none;
+    overflow: hidden;
+  }
+
+  video {
+    width: 100%; height: 100%;
+    display: block;
+    object-fit: contain;
+    cursor: pointer;
+  }
+
+  /* ── CONTROLS OVERLAY ── */
+  .controls-overlay {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: linear-gradient(transparent, rgba(0,0,0,0.78) 65%);
+    padding: 36px 14px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: opacity 0.3s ease;
+    z-index: 10;
+  }
+  .controls-overlay.hidden { opacity: 0; pointer-events: none; }
+
+  /* ── SEEK ── */
+  .seek-row { display: flex; align-items: center; gap: 8px; }
+
+  .seek-bar {
+    flex: 1; height: 4px;
+    -webkit-appearance: none; appearance: none;
+    background: rgba(255,255,255,0.25);
+    border-radius: 2px; cursor: pointer; outline: none;
+    transition: height 0.15s;
+  }
+  .seek-bar:hover { height: 6px; }
+  .seek-bar::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px; height: 13px;
+    background: #fff; border-radius: 50%; cursor: pointer;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+  }
+
+  .time-display {
+    color: #ddd; font-size: 12px;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+
+  /* ── BOTTOM ROW ── */
+  .bottom-row { display: flex; align-items: center; gap: 4px; }
+
+  .ctrl-btn {
+    background: none; border: none; color: #ddd; cursor: pointer;
+    padding: 5px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    transition: color 0.15s, background 0.15s; flex-shrink: 0;
+  }
+  .ctrl-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
+
+  .volume-wrap { display: flex; align-items: center; gap: 5px; }
+
+  .volume-bar {
+    width: 72px; height: 4px;
+    -webkit-appearance: none; appearance: none;
+    background: rgba(255,255,255,0.25);
+    border-radius: 2px; cursor: pointer; outline: none;
+  }
+  .volume-bar::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    background: #fff; border-radius: 50%; cursor: pointer;
+  }
+
+  .spacer { flex: 1; }
+
+  /* ── SETTINGS MENU ── */
+  .settings-menu {
+    position: absolute;
+    bottom: 60px; right: 46px;
+    background: rgba(22,22,22,0.97);
+    border-radius: 8px; padding: 6px 0;
+    min-width: 165px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.7);
+    z-index: 20; display: none;
+    backdrop-filter: blur(8px);
+  }
+  .settings-menu.open { display: block; }
+
+  .settings-section-title {
+    padding: 6px 14px 4px;
+    color: #777; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+
+  .settings-option {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 14px;
+    color: #bbb; font-size: 13px; cursor: pointer;
+    transition: background 0.1s;
+  }
+  .settings-option:hover { background: rgba(255,255,255,0.07); color: #fff; }
+  .settings-option.danger { color: #ff6b6b; }
+  .settings-option.danger:hover { background: rgba(255,80,80,0.1); color: #ff8a8a; }
+
+  .settings-divider {
+    height: 1px; background: rgba(255,255,255,0.08);
+    margin: 4px 0;
+  }
+
+  .speed-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 1.5px solid #555; flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .speed-dot.active { background: #29b6f6; border-color: #29b6f6; }
+
+  /* ── GUEST DISABLED STATE ── */
+  .ctrl-btn.disabled { opacity: 0.35; cursor: default; }
+  .ctrl-btn.disabled:hover { background: none; color: #ddd; }
+  .volume-wrap.disabled .volume-bar { opacity: 0.35; pointer-events: none; }
+  .volume-wrap.disabled .ctrl-btn { opacity: 0.35; cursor: default; }
+  .volume-wrap.disabled .ctrl-btn:hover { background: none; color: #ddd; }
+
+  /* ── GUEST TOOLTIP ── */
+  .guest-tooltip {
+    position: fixed;
+    background: rgba(20,20,20,0.97);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px; padding: 10px 14px;
+    color: #fff; font-size: 13px; line-height: 1.5;
+    pointer-events: none;
+    z-index: 9999; max-width: 240px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    opacity: 0; transition: opacity 0.15s;
+    backdrop-filter: blur(8px);
+  }
+  .guest-tooltip.visible { opacity: 1; pointer-events: auto; }
+  .guest-tooltip .tt-action {
+    color: #29b6f6; font-size: 12px; cursor: pointer;
+    margin-top: 5px; display: block;
+  }
+  .guest-tooltip .tt-action:hover { text-decoration: underline; }
+
+  /* ── LOGIN MODAL ── */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+    backdrop-filter: blur(4px);
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: auto; }
+
+  .modal {
+    background: #1a1a1a;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px; padding: 32px 28px;
+    width: 100%; max-width: 340px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    transform: translateY(10px);
+    transition: transform 0.2s;
+  }
+  .modal-backdrop.open .modal { transform: translateY(0); }
+
+  .modal-title {
+    color: #fff; font-size: 18px; font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .modal-subtitle {
+    color: #888; font-size: 13px; margin-bottom: 24px;
+  }
+
+  .modal-field { margin-bottom: 16px; }
+  .modal-field label {
+    display: block; color: #aaa; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+  .modal-field input[type="text"],
+  .modal-field input[type="password"] {
+    width: 100%; background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 6px; padding: 10px 12px;
+    color: #fff; font-size: 14px; outline: none;
+    transition: border-color 0.15s;
+    font-family: inherit;
+  }
+  .modal-field input:focus { border-color: #29b6f6; }
+
+  .modal-checkbox {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 24px; cursor: pointer;
+  }
+  .modal-checkbox input { accent-color: #29b6f6; cursor: pointer; }
+  .modal-checkbox span { color: #aaa; font-size: 13px; }
+
+  .modal-error {
+    color: #ff6b6b; font-size: 12px;
+    margin-bottom: 14px; min-height: 16px;
+  }
+
+  .modal-btn {
+    width: 100%; padding: 11px;
+    background: #29b6f6; border: none; border-radius: 6px;
+    color: #000; font-size: 14px; font-weight: 700;
+    cursor: pointer; transition: background 0.15s;
+    font-family: inherit;
+  }
+  .modal-btn:hover { background: #4fc3f7; }
+
+  .modal-cancel {
+    width: 100%; padding: 9px;
+    background: none; border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 6px; color: #888; font-size: 13px;
+    cursor: pointer; margin-top: 8px;
+    transition: border-color 0.15s, color 0.15s;
+    font-family: inherit;
+  }
+  .modal-cancel:hover { border-color: rgba(255,255,255,0.3); color: #ccc; }
+</style>
+</head>
+<body>
+
+<!-- ── LOGIN MODAL ── -->
+<div class="modal-backdrop" id="loginModal">
+  <div class="modal">
+    <div class="modal-title">Přihlášení</div>
+    <div class="modal-subtitle">Pro přístup ke všem funkcím se přihlaste.</div>
+    <div class="modal-field">
+      <label>Uživatelské jméno</label>
+      <input type="text" id="loginUser" autocomplete="username" placeholder="uživatel">
+    </div>
+    <div class="modal-field">
+      <label>Heslo</label>
+      <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••">
+    </div>
+    <label class="modal-checkbox">
+      <input type="checkbox" id="rememberMe">
+      <span>Zapamatovat pro toto zařízení</span>
+    </label>
+    <div class="modal-error" id="loginError"></div>
+    <button class="modal-btn" onclick="submitLogin()">Přihlásit se</button>
+    <button class="modal-cancel" id="cancelBtn" onclick="closeLogin()">Zrušit</button>
+  </div>
+</div>
+
+<!-- ── GUEST TOOLTIP ── -->
+<div class="guest-tooltip" id="guestTooltip">
+  <span id="ttMsg"></span>
+  <span class="tt-action" onclick="openLogin()">Změnit účet</span>
+</div>
+
+<!-- ── PLAYER ── -->
+<div class="player" id="player">
+  <video id="video" playsinline></video>
+
+  <div class="controls-overlay" id="controls">
+    <div class="seek-row">
+      <input type="range" class="seek-bar" id="seekBar" min="0" max="100" value="0" step="0.1">
+      <span class="time-display" id="timeDisplay">0:00 / 0:00</span>
+    </div>
+
+    <div class="bottom-row">
+      <!-- Play/Pause -->
+      <button class="ctrl-btn" id="playBtn" onclick="togglePlay()">
+        <svg id="playIcon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <polygon points="5,3 19,12 5,21"/>
+        </svg>
+      </button>
+
+      <!-- Volume -->
+      <div class="volume-wrap" id="volWrap">
+        <button class="ctrl-btn" id="muteBtn" onclick="toggleMute()">
+          <svg id="volIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+          </svg>
+        </button>
+        <input type="range" class="volume-bar" id="volumeBar" min="0" max="1" step="0.01" value="1">
+      </div>
+
+      <div class="spacer"></div>
+
+      <!-- Settings -->
+      <button class="ctrl-btn" id="settingsBtn" onclick="toggleSettingsMenu()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+
+      <!-- Download -->
+      <button class="ctrl-btn" id="dlBtn" onclick="handleDownload()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+
+      <!-- Fullscreen -->
+      <button class="ctrl-btn" onclick="toggleFullscreen()">
+        <svg id="fsIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 3 21 3 21 9"/>
+          <polyline points="9 21 3 21 3 15"/>
+          <line x1="21" y1="3" x2="14" y2="10"/>
+          <line x1="3" y1="21" x2="10" y2="14"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Settings menu -->
+  <div class="settings-menu" id="settingsMenu">
+    <div class="settings-section-title">Rychlost</div>
+    <div class="settings-option" onclick="setSpeed(0.5)"><span class="speed-dot" data-speed="0.5"></span>0.5×</div>
+    <div class="settings-option" onclick="setSpeed(0.75)"><span class="speed-dot" data-speed="0.75"></span>0.75×</div>
+    <div class="settings-option" onclick="setSpeed(1)"><span class="speed-dot active" data-speed="1"></span>Normal</div>
+    <div class="settings-option" onclick="setSpeed(1.25)"><span class="speed-dot" data-speed="1.25"></span>1.25×</div>
+    <div class="settings-option" onclick="setSpeed(1.5)"><span class="speed-dot" data-speed="1.5"></span>1.5×</div>
+    <div class="settings-option" onclick="setSpeed(1.75)"><span class="speed-dot" data-speed="1.75"></span>1.75×</div>
+    <div class="settings-option" onclick="setSpeed(2)"><span class="speed-dot" data-speed="2"></span>2×</div>
+    <div class="settings-option" onclick="setSpeed(4)"><span class="speed-dot" data-speed="4"></span>4×</div>
+    <div class="settings-divider" id="logoutDivider" style="display:none"></div>
+    <div class="settings-option danger" id="logoutBtn" style="display:none" onclick="logout()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+        <polyline points="16 17 21 12 16 7"/>
+        <line x1="21" y1="12" x2="9" y2="12"/>
+      </svg>
+      Odhlásit se
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── ELEMENTS ────────────────────────────────────────────────────
+  const video      = document.getElementById('video');
+  const seekBar    = document.getElementById('seekBar');
+  const timeDisp   = document.getElementById('timeDisplay');
+  const playIcon   = document.getElementById('playIcon');
+  const volIcon    = document.getElementById('volIcon');
+  const volumeBar  = document.getElementById('volumeBar');
+  const controls   = document.getElementById('controls');
+  const player     = document.getElementById('player');
+  const settingsMenu = document.getElementById('settingsMenu');
+  const volWrap    = document.getElementById('volWrap');
+  const dlBtn      = document.getElementById('dlBtn');
+  const tooltip    = document.getElementById('guestTooltip');
+  const ttMsg      = document.getElementById('ttMsg');
+  const loginModal = document.getElementById('loginModal');
+
+  // ── AUTH ─────────────────────────────────────────────────────────
+  const VALID_USER = 'user';
+  const VALID_PASS = 'pass';
+  const REMEMBER_KEY = 'secreet';
+
+  let currentUser = 'guest';
+  let isGuestActive = true;
+
+  // Check localStorage for remembered login
+  try {
+    const saved = localStorage.getItem(REMEMBER_KEY);
+    if (saved) {
+      const { user } = JSON.parse(saved);
+      if (user === VALID_USER) { currentUser = user; isGuestActive = false; }
+    }
+  } catch(e) {}
+
+  function updateLogoutVisibility() {
+    const show = !isGuestActive;
+    document.getElementById('logoutDivider').style.display = show ? 'block' : 'none';
+    document.getElementById('logoutBtn').style.display     = show ? 'flex'  : 'none';
+  }
+
+  // ── HLS / VIDEO URL ─────────────────────────────────────────────
+  const urlParams = new URLSearchParams(window.location.search);
+  const M3U8_BASE = 'https://wedos.jtechdev.cz/nvr/m3u8/';
+  const MP4_BASE  = 'https://wedos.jtechdev.cz/nvr/';
+  const videoParam = urlParams.get('video') || 'x36xhzz.m3u8';
+  const VIDEO_URL  = M3U8_BASE + videoParam;
+  const DOWNLOAD_URL = MP4_BASE + videoParam.replace(/\.m3u8$/i, '.mp4');
+
+  let hlsReady = false;
+  let hls = null;
+
+  function loadVideo(url) {
+    if (hls) { hls.destroy(); hls = null; }
+    hlsReady = false;
+
+    if (Hls.isSupported()) {
+      hls = new Hls();
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { hlsReady = true; });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url;
+      video.addEventListener('loadedmetadata', () => { hlsReady = true; }, { once: true });
+    }
+  }
+  loadVideo(VIDEO_URL);
+
+  // ── AUTOPLAY ON FIRST MOUSEMOVE ──────────────────────────────────
+  let autoplayDone = false;
+
+  function startOnMouseMove() {
+    if (autoplayDone || !video.paused) return;
+    autoplayDone = true;
+    document.removeEventListener('mousemove', startOnMouseMove);
+
+    function doAutoplay() {
+      video.muted = true;
+      video.play().then(() => {
+        if (!isGuestActive) {
+          video.muted = false;
+          video.volume = 1;
+          volumeBar.value = 1;
+          updateVolFill();
+          updateVolIcon();
+        }
+      }).catch(() => {});
+    }
+
+    if (hlsReady) {
+      doAutoplay();
+    } else {
+      const wait = setInterval(() => {
+        if (hlsReady) { clearInterval(wait); doAutoplay(); }
+      }, 100);
+    }
+  }
+
+  document.addEventListener('mousemove', startOnMouseMove);
+
+
+  // ── AUTO-HIDE CONTROLS ───────────────────────────────────────────
+  let hideTimer = null;
+  function showControls() {
+    controls.classList.remove('hidden');
+    player.style.cursor = 'default';
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!video.paused) { controls.classList.add('hidden'); player.style.cursor = 'none'; }
+    }, 2500);
+  }
+  player.addEventListener('mousemove', showControls);
+  player.addEventListener('mouseenter', showControls);
+  player.addEventListener('mouseleave', () => {
+    clearTimeout(hideTimer);
+    if (!video.paused) { controls.classList.add('hidden'); player.style.cursor = 'none'; }
+  });
+  video.addEventListener('pause', () => { clearTimeout(hideTimer); controls.classList.remove('hidden'); player.style.cursor = 'default'; });
+  video.addEventListener('play', showControls);
+
+  // ── SEEK ─────────────────────────────────────────────────────────
+  video.addEventListener('timeupdate', () => {
+    if (!video.duration) return;
+    const pct = (video.currentTime / video.duration) * 100;
+    seekBar.value = pct;
+    seekBar.style.background = `linear-gradient(to right, #fff ${pct}%, rgba(255,255,255,0.25) ${pct}%)`;
+    const fmt = t => `${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,'0')}`;
+    timeDisp.textContent = `${fmt(video.currentTime)} / ${fmt(video.duration)}`;
+  });
+  seekBar.addEventListener('input', () => {
+    if (video.duration) video.currentTime = (seekBar.value / 100) * video.duration;
+  });
+
+  // ── PLAY/PAUSE ───────────────────────────────────────────────────
+  function togglePlay() { video.paused ? video.play() : video.pause(); }
+  video.addEventListener('click', togglePlay);
+  video.addEventListener('play',  () => { playIcon.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>'; });
+  video.addEventListener('pause', () => { playIcon.innerHTML = '<polygon points="5,3 19,12 5,21"/>'; });
+
+  // ── VOLUME ───────────────────────────────────────────────────────
+  function updateVolFill() {
+    const pct = volumeBar.value * 100;
+    volumeBar.style.background = `linear-gradient(to right, #fff ${pct}%, rgba(255,255,255,0.25) ${pct}%)`;
+  }
+  volumeBar.addEventListener('input', () => {
+    if (isGuestActive) return;
+    video.volume = volumeBar.value; video.muted = false; updateVolFill(); updateVolIcon();
+  });
+  updateVolFill();
+
+  function toggleMute() {
+    if (isGuestActive) return;
+    video.muted = !video.muted; updateVolIcon();
+  }
+  function updateVolIcon() {
+    volIcon.innerHTML = (video.muted || video.volume === 0)
+      ? `<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+         <line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>`
+      : `<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+         <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+         <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>`;
+  }
+
+  // ── SPEED ────────────────────────────────────────────────────────
+  function setSpeed(rate) {
+    video.playbackRate = rate;
+    document.querySelectorAll('.speed-dot').forEach(d => d.classList.toggle('active', parseFloat(d.dataset.speed) === rate));
+    closeSettingsMenu();
+  }
+
+  // ── SETTINGS MENU ────────────────────────────────────────────────
+  function toggleSettingsMenu() { settingsMenu.classList.toggle('open'); }
+  function closeSettingsMenu()  { settingsMenu.classList.remove('open'); }
+
+  document.addEventListener('click', e => {
+    if (!document.getElementById('settingsBtn').contains(e.target) && !settingsMenu.contains(e.target))
+      closeSettingsMenu();
+  });
+
+  // ── FULLSCREEN ───────────────────────────────────────────────────
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) (player.requestFullscreen || player.webkitRequestFullscreen).call(player);
+    else (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  }
+  document.addEventListener('fullscreenchange', () => {
+    const fsIcon = document.getElementById('fsIcon');
+    fsIcon.innerHTML = document.fullscreenElement
+      ? `<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/>
+         <line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/>`
+      : `<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+         <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>`;
+  });
+
+  // ── DOWNLOAD ─────────────────────────────────────────────────────
+  function handleDownload() {
+    if (isGuestActive) return;
+    const a = document.createElement('a');
+    a.href = DOWNLOAD_URL;
+    a.download = DOWNLOAD_URL.split('/').pop();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  // ── GUEST TOOLTIP ────────────────────────────────────────────────
+  let ttHideTimer = null;
+
+  function showGuestTooltip(e) {
+    ttMsg.textContent = `Uživatel ${currentUser} nemá právo využívat funkci.`;
+    clearTimeout(ttHideTimer);
+    tooltip.classList.add('visible');
+    positionTooltip(e);
+  }
+  function positionTooltip(e) {
+    const tw = tooltip.offsetWidth || 240, th = tooltip.offsetHeight || 72;
+    tooltip.style.left = Math.min(e.clientX + 12, window.innerWidth  - tw - 10) + 'px';
+    tooltip.style.top  = Math.max(e.clientY - th - 10, 8) + 'px';
+  }
+  function hideGuestTooltip() {
+    ttHideTimer = setTimeout(() => tooltip.classList.remove('visible'), 200);
+  }
+  tooltip.addEventListener('mouseenter', () => clearTimeout(ttHideTimer));
+  tooltip.addEventListener('mouseleave', () => tooltip.classList.remove('visible'));
+
+  // Restricted element handlers
+  function attachGuestHandlers() {
+    volWrap.addEventListener('mouseenter', guestVolEnter);
+    volWrap.addEventListener('mousemove',  guestVolMove);
+    volWrap.addEventListener('mouseleave', hideGuestTooltip);
+    volWrap.addEventListener('click',      guestBlock, true);
+    dlBtn.addEventListener('mouseenter',   guestDlEnter);
+    dlBtn.addEventListener('mousemove',    guestDlMove);
+    dlBtn.addEventListener('mouseleave',   hideGuestTooltip);
+    dlBtn.addEventListener('click',        guestBlock, true);
+  }
+  function detachGuestHandlers() {
+    volWrap.removeEventListener('mouseenter', guestVolEnter);
+    volWrap.removeEventListener('mousemove',  guestVolMove);
+    volWrap.removeEventListener('mouseleave', hideGuestTooltip);
+    volWrap.removeEventListener('click',      guestBlock, true);
+    dlBtn.removeEventListener('mouseenter',   guestDlEnter);
+    dlBtn.removeEventListener('mousemove',    guestDlMove);
+    dlBtn.removeEventListener('mouseleave',   hideGuestTooltip);
+    dlBtn.removeEventListener('click',        guestBlock, true);
+  }
+  function guestVolEnter(e) { showGuestTooltip(e); }
+  function guestVolMove(e)  { positionTooltip(e); }
+  function guestDlEnter(e)  { showGuestTooltip(e); }
+  function guestDlMove(e)   { positionTooltip(e); }
+  function guestBlock(e)    { e.stopPropagation(); e.preventDefault(); }
+
+  // ── APPLY GUEST/LOGGED STATE ─────────────────────────────────────
+  function applyGuestState(active) {
+    if (active) {
+      video.muted = true; video.volume = 0;
+      volumeBar.value = 0; updateVolFill(); updateVolIcon();
+      volWrap.classList.add('disabled');
+      dlBtn.classList.add('disabled');
+      attachGuestHandlers();
+    } else {
+      volWrap.classList.remove('disabled');
+      dlBtn.classList.remove('disabled');
+      detachGuestHandlers();
+      tooltip.classList.remove('visible');
+      // Restore volume
+      video.muted = false; video.volume = 1;
+      volumeBar.value = 1; updateVolFill(); updateVolIcon();
+    }
+    updateLogoutVisibility();
+  }
+
+  // ── LOGIN MODAL ───────────────────────────────────────────────────
+  function openLogin() {
+    tooltip.classList.remove('visible');
+    document.getElementById('loginUser').value = '';
+    document.getElementById('loginPass').value = '';
+    document.getElementById('loginError').textContent = '';
+    document.getElementById('rememberMe').checked = false;
+    // Hide cancel if no way to dismiss (first open as guest)
+    document.getElementById('cancelBtn').style.display = 'block';
+    loginModal.classList.add('open');
+    setTimeout(() => document.getElementById('loginUser').focus(), 100);
+  }
+
+  function closeLogin() {
+    loginModal.classList.remove('open');
+  }
+
+  function submitLogin() {
+    const user = document.getElementById('loginUser').value.trim();
+    const pass = document.getElementById('loginPass').value;
+    const remember = document.getElementById('rememberMe').checked;
+    const errEl = document.getElementById('loginError');
+
+    if (user === VALID_USER && pass === VALID_PASS) {
+      currentUser = user;
+      isGuestActive = false;
+      if (remember) {
+        try { localStorage.setItem(REMEMBER_KEY, JSON.stringify({ user })); } catch(e) {}
+      }
+      applyGuestState(false);
+      closeLogin();
+    } else {
+      errEl.textContent = 'Nesprávné uživatelské jméno nebo heslo.';
+      document.getElementById('loginPass').value = '';
+      document.getElementById('loginPass').focus();
+    }
+  }
+
+  // Enter key in modal
+  document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') submitLogin(); });
+  document.getElementById('loginUser').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('loginPass').focus(); });
+
+  // ── LOGOUT ───────────────────────────────────────────────────────
+  function logout() {
+    try { localStorage.removeItem(REMEMBER_KEY); } catch(e) {}
+    currentUser = 'guest';
+    isGuestActive = true;
+    applyGuestState(true);
+    closeSettingsMenu();
+  }
+
+  // ── INIT ─────────────────────────────────────────────────────────
+  applyGuestState(isGuestActive);
+</script>
+</body>
+</html>

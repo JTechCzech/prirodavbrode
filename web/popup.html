@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NVR Detekce</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    font-family: 'DM Mono', monospace;
+    background: transparent;
+  }
+
+  #nvrOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    animation: fadeIn .2s ease;
+  }
+  @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+
+  #nvrModal {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 20px;
+    width: 100%;
+    max-width: 860px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.08);
+    animation: slideUp .3s cubic-bezier(.16,1,.3,1);
+  }
+  @keyframes slideUp { from { transform: translateY(24px); opacity:0 } to { transform: translateY(0); opacity:1 } }
+
+  #nvrHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    flex-shrink: 0;
+  }
+  #nvrHeader h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #111;
+    letter-spacing: .02em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .live-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    background: #16a34a;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #16a34a99;
+    animation: blink 2s infinite;
+    flex-shrink: 0;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+  #closeBtn {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: #f4f4f5;
+    border: 1px solid #e4e4e7;
+    color: #71717a;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s;
+    flex-shrink: 0;
+  }
+  #closeBtn:hover { background: #e4e4e7; color: #111; }
+
+  #nvrBody {
+    overflow-y: auto;
+    padding: 20px 24px 24px;
+    flex: 1;
+    scrollbar-width: thin;
+    scrollbar-color: #ddd transparent;
+  }
+  #nvrBody::-webkit-scrollbar { width: 4px; }
+  #nvrBody::-webkit-scrollbar-thumb { background: #ddd; border-radius: 3px; }
+
+  .entry-card {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    margin-bottom: 12px;
+    animation: cardIn .3s cubic-bezier(.16,1,.3,1) both;
+  }
+  @keyframes cardIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:none } }
+
+  .entry-time {
+    flex-shrink: 0;
+    width: 100px;
+    padding-top: 12px;
+    text-align: right;
+  }
+  .entry-time .t-date {
+    font-size: .6rem;
+    color: #aaa;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  .entry-time .t-hour {
+    font-size: .95rem;
+    font-weight: 500;
+    color: #222;
+    letter-spacing: .02em;
+    margin-top: 2px;
+  }
+
+  .entry-line {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 17px;
+    align-self: stretch;
+  }
+  .entry-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: #2563eb;
+    box-shadow: 0 0 6px #2563eb55;
+    flex-shrink: 0;
+  }
+  .entry-vline {
+    width: 1px;
+    flex: 1;
+    min-height: 20px;
+    background: linear-gradient(to bottom, #2563eb22, #e5e7eb88);
+    margin-top: 4px;
+  }
+
+  .entry-cams {
+    flex: 1;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-bottom: 4px;
+  }
+
+  .cam-btn {
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    flex: 1;
+    min-width: 150px;
+    border: 1px solid #e5e7eb;
+    background: #fafafa;
+    transition: transform .15s, border-color .15s, box-shadow .15s;
+    text-decoration: none;
+    display: block;
+  }
+  .cam-btn:hover {
+    transform: translateY(-2px);
+    border-color: #93c5fd;
+    box-shadow: 0 6px 20px rgba(37,99,235,0.1);
+  }
+  .cam-btn:active { transform: translateY(0); }
+
+  .cam-thumb {
+    width: 100%;
+    aspect-ratio: 16/9;
+    object-fit: cover;
+    display: block;
+    background: #f0f0f0;
+  }
+
+  .cam-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    background: #fff;
+    border-top: 1px solid #f0f0f0;
+  }
+  /* combined card — indoor + outdoor vedle sebe */
+  .cam-card-combined {
+    flex: 1;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    background: #fafafa;
+    transition: border-color .15s, box-shadow .15s;
+    position: relative;
+    cursor: pointer;
+  }
+  .cam-card-combined:hover {
+    border-color: #93c5fd;
+    box-shadow: 0 6px 20px rgba(37,99,235,0.1);
+  }
+
+  /* overlay přes celou kartu při hoveru */
+  .cam-combined-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity .18s;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .cam-card-combined:hover .cam-combined-overlay {
+    opacity: 1;
+  }
+  .cam-combined-play {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: #2563eb;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(37,99,235,0.45);
+    transform: scale(0.85);
+    transition: transform .18s;
+  }
+  .cam-card-combined:hover .cam-combined-play {
+    transform: scale(1);
+  }
+
+  .cam-thumbs {
+    display: flex;
+    gap: 0;
+  }
+
+  .cam-thumb-link {
+    flex: 1;
+    position: relative;
+    display: block;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .cam-thumb-link + .cam-thumb-link {
+    border-left: 1px solid #e5e7eb;
+  }
+  .cam-thumb-link .cam-thumb {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16/9;
+    object-fit: cover;
+    background: #f0f0f0;
+  }
+
+  .cam-thumb-overlay {
+    display: none;
+  }
+
+  /* single cam */
+  .cam-name {
+    font-family: 'DM Mono', monospace;
+    font-size: .65rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: #888;
+  }
+  .cam-play {
+    margin-left: auto;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: #2563eb;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 7px;
+    color: #fff;
+    flex-shrink: 0;
+    transition: background .15s;
+  }
+  .cam-btn:hover .cam-play { background: #1d4ed8; }
+
+  /* ── Player popup ── */
+  #playerOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.92);
+    z-index: 10000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    animation: fadeIn .2s ease;
+  }
+  #playerOverlay.visible { display: flex; }
+
+  #playerModal {
+    background: #000;
+    border-radius: 16px;
+    width: 100%;
+    max-width: 1100px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.8);
+    animation: slideUp .3s cubic-bezier(.16,1,.3,1);
+  }
+
+  #playerHeader {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 12px 16px;
+    flex-shrink: 0;
+  }
+
+  #playerCloseBtn {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #aaa;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s;
+  }
+  #playerCloseBtn:hover { background: rgba(255,255,255,0.16); color: #fff; }
+
+  #playerFrame {
+    width: 100%;
+    flex: 1;
+    border: none;
+    min-height: 400px;
+    background: #000;
+  }
+
+    text-align: center;
+    padding: 50px 0;
+    color: #bbb;
+    font-size: .78rem;
+    letter-spacing: .08em;
+  }
+  .spinner {
+    display: inline-block;
+    width: 20px; height: 20px;
+    border: 2px solid #e5e7eb;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+    margin-bottom: 10px;
+  }
+  @keyframes spin { to { transform: rotate(360deg) } }
+</style>
+</head>
+<body>
+
+<div id="playerOverlay">
+  <div id="playerModal">
+    <div id="playerHeader">
+      <button id="playerCloseBtn" onclick="closePlayer()" title="Zavřít">✕</button>
+    </div>
+    <iframe id="playerFrame" src="" allowfullscreen></iframe>
+  </div>
+</div>
+
+<div id="nvrOverlay">
+  <div id="nvrModal">
+    <div id="nvrHeader">
+      <h2 id="nvrTitle"><span class="live-dot"></span>Detekce záznamy</h2>
+      <button id="closeBtn" onclick="closeNvr()" title="Zavřít">✕</button>
+    </div>
+    <div id="nvrBody">
+      <div id="loadingMsg">
+        <div class="spinner"></div><br>Načítám záznamy…
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE     = "https://wedos.jtechdev.cz/nvr/m3u8/";
+const FALLBACK = "https://wedos.jtechdev.cz/nia.svg";
+
+// předat tstart / tend / nest z URL parametrů této stránky do API
+function buildApiUrl() {
+  const p  = new URLSearchParams(window.location.search);
+  const ap = new URLSearchParams();
+  if (p.get("tstart")) ap.set("tstart", p.get("tstart"));
+  if (p.get("tend"))   ap.set("tend",   p.get("tend"));
+  if (p.get("nest"))   ap.set("nest",   p.get("nest"));
+  const qs = ap.toString();
+  return "https://wedos.jtechdev.cz/files.php" + (qs ? "?" + qs : "");
+}
+
+// zobraz count z URL parametru v hlavičce
+const urlCount = new URLSearchParams(window.location.search).get("count");
+if (urlCount !== null) {
+  document.getElementById("nvrTitle").innerHTML =
+    `<span class="live-dot"></span><span id="countNum">${parseInt(urlCount)}</span> detekcí tuto hodinu`;
+}
+
+function closeNvr() {
+  // pošle zprávu rodičovské stránce aby schovala iframe
+  try { window.parent.postMessage("nvrClose", "*"); } catch(e) {}
+  document.getElementById("nvrOverlay").style.display = "none";
+}
+
+document.getElementById("nvrOverlay").addEventListener("click", e => {
+  if (e.target === document.getElementById("nvrOverlay")) closeNvr();
+});
+
+function openPlayer(url) {
+  document.getElementById("nvrOverlay").style.display = "none";
+  document.getElementById("playerFrame").src = url;
+  document.getElementById("playerOverlay").classList.add("visible");
+}
+
+function closePlayer() {
+  document.getElementById("playerOverlay").classList.remove("visible");
+  document.getElementById("playerFrame").src = "";
+  document.getElementById("nvrOverlay").style.display = "flex";
+}
+
+document.getElementById("playerOverlay").addEventListener("click", e => {
+  if (e.target === document.getElementById("playerOverlay")) closePlayer();
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    if (document.getElementById("playerOverlay").classList.contains("visible")) closePlayer();
+    else closeNvr();
+  }
+});
+
+
+
+function formatTime(ts) {
+  const d = new Date(ts * 1000);
+  const date = d.toLocaleDateString("cs-CZ", { day:"2-digit", month:"2-digit", year:"2-digit" });
+  const time = d.toLocaleTimeString("cs-CZ", { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+  return { date, time };
+}
+
+fetch(buildApiUrl())
+  .then(r => r.json())
+  .then(data => {
+    const body = document.getElementById("nvrBody");
+    const keys = Object.keys(data).sort((a, b) => b - a);
+
+    if (keys.length === 0) {
+      body.innerHTML = "<div id='loadingMsg'>Žádné záznamy.</div>";
+      return;
+    }
+
+    body.innerHTML = "";
+
+    keys.forEach((ts, i) => {
+      const device  = Object.values(data[ts])[0];
+      const indoor  = device["indoor"];
+      const outdoor = device["outdoor"];
+      const { date, time } = formatTime(ts);
+
+      const card = document.createElement("div");
+      card.className = "entry-card";
+      card.style.animationDelay = Math.min(i * 40, 500) + "ms";
+
+      const timeCol = document.createElement("div");
+      timeCol.className = "entry-time";
+      timeCol.innerHTML = `<div class="t-date">${date}</div><div class="t-hour">${time}</div>`;
+
+      const lineEl = document.createElement("div");
+      lineEl.className = "entry-line";
+      lineEl.innerHTML = `
+        <div class="entry-dot"></div>
+        ${i < keys.length - 1 ? '<div class="entry-vline"></div>' : ''}
+      `;
+
+      const cams = document.createElement("div");
+      cams.className = "entry-cams";
+
+      if (indoor && outdoor) {
+        const card2 = document.createElement("div");
+        card2.className = "cam-card-combined";
+
+        // overlay s play tlačítkem uprostřed
+        const overlay = document.createElement("div");
+        overlay.className = "cam-combined-overlay";
+        overlay.innerHTML = `<div class="cam-combined-play">▶</div>`;
+        card2.appendChild(overlay);
+
+        // klik otevře double player
+        card2.addEventListener("click", () => {
+          const url = `https://wedos.jtechdev.cz/doubleplayer.html?indoor=${encodeURIComponent(indoor)}&outdoor=${encodeURIComponent(outdoor)}&cdelay=0`;
+          openPlayer(url);
+        });
+
+        const thumbRow = document.createElement("div");
+        thumbRow.className = "cam-thumbs";
+
+        const makeThumb = (file, label) => {
+          const wrap = document.createElement("div");
+          wrap.className = "cam-thumb-link";
+          const img = document.createElement("img");
+          img.className = "cam-thumb";
+          img.src = BASE + file + ".jpg";
+          img.onerror = () => { img.src = FALLBACK; };
+          img.alt = label;
+          wrap.appendChild(img);
+          return wrap;
+        };
+
+        thumbRow.appendChild(makeThumb(indoor,  "Indoor"));
+        thumbRow.appendChild(makeThumb(outdoor, "Outdoor"));
+        card2.appendChild(thumbRow);
+        cams.appendChild(card2);
+
+      } else {
+        // jen jedna kamera
+        const file  = indoor || outdoor;
+        const label = indoor ? "Indoor" : "Outdoor";
+        const btn = document.createElement("div");
+        btn.className = "cam-btn";
+        btn.style.cursor = "pointer";
+        btn.addEventListener("click", () => {
+          openPlayer(`https://wedos.jtechdev.cz/player.html?video=${encodeURIComponent(file)}`);
+        });
+        const img = document.createElement("img");
+        img.className = "cam-thumb";
+        img.src = BASE + file + ".jpg";
+        img.onerror = () => { img.src = FALLBACK; };
+        img.alt = label;
+        const lbl = document.createElement("div");
+        lbl.className = "cam-label";
+        lbl.innerHTML = `<span class="cam-name">${label}</span><span class="cam-play">▶</span>`;
+        btn.appendChild(img);
+        btn.appendChild(lbl);
+        cams.appendChild(btn);
+      }
+
+      card.appendChild(timeCol);
+      card.appendChild(lineEl);
+      card.appendChild(cams);
+      body.appendChild(card);
+    });
+  })
+  .catch(err => {
+    document.getElementById("nvrBody").innerHTML =
+      "<div id='loadingMsg' style='color:#f87171'>Chyba načítání API</div>";
+    console.error(err);
+  });
+</script>
+</body>
+</html>
