@@ -6,14 +6,14 @@
 #include "ota.h"
 
 // WiFi credentials
-const char* ssid = "CAM";
-const char* password = "spehujute";
+const char* ssid = "****";
+const char* password = "*****";
 
 // MQTT broker
-const char* mqtt_broker = "192.168.0.50";
+const char* mqtt_broker = "IP";
 const int mqtt_port = 1883;
-const char* mqtt_username = "esp";
-const char* mqtt_password = "ESP918273*";
+const char* mqtt_username = "username";
+const char* mqtt_password = "pass";
 
 // Device info
 const char* DEVICE_ID = "ESP32_ORECH";  // Change for each device
